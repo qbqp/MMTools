@@ -1,0 +1,28 @@
+
+# Border.image
+# Definitely uncompressed
+# CLUT looks like it starts immediately after this header
+# 00 04 B6 04 00 00 00 02
+
+# BargainScene.image
+# probably compressed
+# 00 04 B6 04 00 00 00 00
+
+# bargain1.shapes
+# probably compressed
+# 00 05 B0 8A 00 00 00 00
+
+# Jurassic.tileset
+# 00 09 DB 6B 00 00 00 00 01
+
+# Candy.tileset
+# 00 09 D3 03 00 00 00 00 01
+
+# Fairy.Tileset
+# 00 0B B7 8B 00 00 00 00 01
+
+# Clown.tileset
+# 00 09 82 93 00 00 00 00 01
+
+# Bargain.tileset
+# 00 0B C9 DD 00 00 00 00 01

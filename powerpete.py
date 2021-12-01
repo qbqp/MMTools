@@ -1,45 +1,8 @@
-import colorsys
-import sys
-
 import pygame
 from pygame.locals import *
 
 
-# 0xd5 = ??? (a ton) of tiles repeated
-# 0x84 = tile repeated 7 times (???) (assume 3 are added, because you wouldn't repeat a tile just twice?)
-# 0x14 (20) = next 21 tiles are as-is
-
 pygame.font.init()
-# print(pygame.font.get_fonts())
-# sys.exit(0)
-
-# Border.image
-# Definitely uncompressed
-# CLUT looks like it starts immediately after this header
-# 00 04 B6 04 00 00 00 02
-
-# BargainScene.image
-# probably compressed
-# 00 04 B6 04 00 00 00 00
-
-# bargain1.shapes
-# probably compressed
-# 00 05 B0 8A 00 00 00 00
-
-# Jurassic.tileset
-# 00 09 DB 6B 00 00 00 00 01
-
-# Candy.tileset
-# 00 09 D3 03 00 00 00 00 01
-
-# Fairy.Tileset
-# 00 0B B7 8B 00 00 00 00 01
-
-# Clown.tileset
-# 00 09 82 93 00 00 00 00 01
-
-# Bargain.tileset
-# 00 0B C9 DD 00 00 00 00 01
 
 class Utils:
 
@@ -58,9 +21,9 @@ class Utils:
         colors = []
         while i < len(data):
             colors.append((
-                Utils.read_short(data[i: i + 2]) / 256.0,
-                Utils.read_short(data[i + 2: i + 4]) / 256.0,
-                Utils.read_short(data[i + 4: i + 6]) / 256.0))
+                Utils.read_short_2(data, i) / 256.0,
+                Utils.read_short_2(data, i + 2) / 256.0,
+                Utils.read_short_2(data, i + 4) / 256.0))
 
             i += 6
 
@@ -68,7 +31,6 @@ class Utils:
 
     @staticmethod
     def read_image(data, clut, size):
-        # print(size)
         width, height = size
         surface = pygame.Surface(size)
         pixel_array = pygame.PixelArray(surface)
@@ -187,13 +149,10 @@ class PPTileSet:
         filename_count = Utils.read_short(self.raw_data[0x26 : 0x28])
 
         tile_count_offset = 0x28 + (filename_count * 0x100)
-        # print(tile_count_offset)
 
         tile_count = Utils.read_short(self.raw_data[tile_count_offset : tile_count_offset + 2])
-        # print(tile_count)
         self.tiles = []
 
-        # offset = 0x42a
         offset = tile_count_offset + 2
         for i in range(tile_count):
             self.tiles.append(Utils.read_image(self.raw_data[offset + (i * (32 * 32)) : offset + (i * (32 * 32)) + (32 * 32)], clut, (32, 32)))
@@ -260,39 +219,6 @@ class PPTileSet:
         return surface
 
 
-
-class TileSet:
-    def __init__(self):
-        self._tiles = []
-        myfont = pygame.font.SysFont('couriernew', 10)
-
-        for i in range(0xffff):
-            tile = pygame.Surface((32, 32))
-
-            # These don't work that well
-            # color_fraction = float(i) / float(0xffff)
-            # value = (i >> 8) / 255.0
-            # color = colorsys.hsv_to_rgb(color_fraction, 1.0, value)
-
-            # color = [e * 255.0 for e in color]
-
-            if i & 0x8000:
-                green = 255
-            else:
-                green = 0
-
-            pygame.draw.rect(tile, (i >> 8, green, i % 0xff), pygame.Rect(0, 0, 32, 32))
-            # pygame.draw.rect(tile, color, pygame.Rect(0, 0, 32, 32))
-
-            text_surface = myfont.render(hex(i)[2:], True, (0xff, 0xff, 0xff))
-            tile.blit(text_surface, (0, 0))
-
-            # tile.fill((0xff, 0, 0))
-            self._tiles.append(tile)
-
-    def get_tile(self, i) -> pygame.Surface:
-        return self._tiles[i]
-
 class PPMap:
     def __init__(self, filename, tileset):
         with open(filename, "rb") as file_handle:
@@ -301,14 +227,9 @@ class PPMap:
         self.width = (self.raw_data[0x17] << 8) + self.raw_data[0x18]
         self.height = (self.raw_data[0x19] << 8) + self.raw_data[0x1a]
 
-        # self.tileset = TileSet()
         self.tileset = tileset
 
         self.map = self.unpack(self.raw_data[0x1b :])
-
-
-        # for t in unpacked:
-        #     print(hex(t), end=',')
 
     def run(self):
 
@@ -322,8 +243,6 @@ class PPMap:
 
         width = self.width
         height = self.height
-        # print(width)
-        # sys.exit(0)
 
 
         position_x = 0
@@ -440,47 +359,3 @@ if __name__ == "__main__":
     #             running = False
     #
     # pygame.quit()
-
-
-
-# file = 'tmw_desert_spacing.png'
-
-
-
-#
-# class Game:
-#     W = 640
-#     H = 240
-#     SIZE = W, H
-#
-#     def __init__(self):
-#         pygame.init()
-#         self.screen = pygame.display.set_mode(Game.SIZE)
-#         pygame.display.set_caption("Pygame Tiled Demo")
-#         self.running = True
-#
-#     def run(self):
-#         while self.running:
-#             for event in pygame.event.get():
-#                 if event.type == QUIT:
-#                     self.running = False
-#
-#                 elif event.type == KEYDOWN:
-#                     if event.key == K_l:
-#                         self.load_image(file)
-#
-#         pygame.quit()
-#
-#     def load_image(self, file):
-#         self.file = file
-#         self.image = pygame.image.load(file)
-#         self.rect = self.image.get_rect()
-#
-#         self.screen = pygame.display.set_mode(self.rect.size)
-#         pygame.display.set_caption(f'size:{self.rect.size}')
-#         self.screen.blit(self.image, self.rect)
-#         pygame.display.update()
-#
-#
-# game = Game()
-# game.run()
