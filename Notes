@@ -26,3 +26,21 @@
 
 # Bargain.tileset
 # 00 0B C9 DD 00 00 00 00 01
+
+Tileset format
+# after tile images:
+# 2 bytes, length of next section
+# N records, 2 bytes each, that look like indices of tiles
+# 2 bytes, length of next section
+# N records, 8 bytes each, flags?
+# 0x0100
+# Something that looks like a CLUT
+# Then at the end, animation data?
+
+# Image format
+# 4 bytes, always 0x0004b604
+# 4 bytes, 0x00000002 for uncompressed, 0x00000000 for compressed
+# 1536 bytes CLUT
+# 2 byte width
+# 2 byte height
+# image data

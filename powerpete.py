@@ -1,10 +1,63 @@
-import pygame
-from pygame.locals import *
+# import pygame
+# from pygame.locals import *
+
+# import sdl2
+import ctypes
+from typing import List
+
+import numpy as np
+import sdl2
+import sdl2.ext
+
+from sdl2 import SDL_CreateRGBSurface, SDL_GetError, Uint8, Uint32, SDL_Init, SDL_INIT_VIDEO, SDL_CreateWindow, \
+    SDL_WINDOWPOS_CENTERED, SDL_GetWindowSurface, SDL_UpdateWindowSurface, SDL_BlitSurface, SDL_Event, SDL_PollEvent, \
+    SDL_QUIT, SDL_Delay, SDL_DestroyWindow, SDL_Quit, SDL_LockSurface, SDL_UnlockSurface, SDL_WINDOW_SHOWN, SDL_Rect
 
 
-pygame.font.init()
+# pygame.font.init()
+
+class Color:
+    #
+    sdl_surface_bitmask = [
+        0xff000000,
+        0x00ff0000,
+        0x0000ff00,
+        0x000000ff
+    ]
+
+    # little endian
+#     sdl_surface_bitmask = [
+#         0x000000ff,
+#         0x0000ff00,
+#         0x00ff0000,
+# #         0xff000000
+#         0x0
+#     ]
+
+    def __init__(self, r, g, b, alpha):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.alpha = alpha
+
+    def __repr__(self):
+        return f"{self.r} {self.g} {self.b} {self.alpha}"
+
+    def to_sdl_bytes(self):
+        return (self.r << 24) | (self.g << 16) | (self.b << 8) | self.alpha
+
 
 class Utils:
+
+    @staticmethod
+    def create_surface(width, height):
+        # RGBA
+        surface = SDL_CreateRGBSurface(0, width, height, 32, *Color.sdl_surface_bitmask)
+        # surface = SDL_CreateRGBSurface(0, width, height, 32, 0, 0, 0, 0)
+        if surface is None:
+            raise Exception(SDL_GetError())
+
+        return surface
 
     # This should take a list and an offset instead of having the caller do that
     @staticmethod
@@ -15,6 +68,11 @@ class Utils:
     def read_short_2(data, offset):
         return (data[offset] << 8) + data[offset + 1]
 
+    @staticmethod
+    def read_long(data, offset):
+        return (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3]
+
+    # Reads as tuples
     @staticmethod
     def read_clut(data):
         i = 0
@@ -29,19 +87,36 @@ class Utils:
 
         return colors
 
+    # Returns list of color objects, ignore every other byte (assume that was a mistake in MM code..)
     @staticmethod
-    def read_image(data, clut, size):
-        width, height = size
-        surface = pygame.Surface(size)
-        pixel_array = pygame.PixelArray(surface)
+    def read_clut_2(data, offset):
+        colors = []
+        for i in range(256):
+            r = data[offset]
+            g = data[offset + 2]
+            b = data[offset + 4]
+            colors.append(Color(r, g, b, 0xff))
+            offset += 6
 
-        i = 0
+        return colors
+
+    @staticmethod
+    def read_image(data, offset, width, height, clut: List[Color]):
+
+        surface = Utils.create_surface(width, height)
+
+        # if (SDL_LockSurface(surface) != 0):
+        #     raise Exception(SDL_GetError())
+
+        pixel_buffer = ctypes.cast(surface.contents.pixels, ctypes.POINTER(ctypes.c_uint))
+        # pixel_buffer = ctypes.cast(surface.contents.pixels, ctypes.POINTER(ctypes.c_byte))
+
         for y in range(height):
             for x in range(width):
-                pixel_array[x, y] = clut[data[i]]
-                i += 1
+                pixel_buffer[((y * width) + x)] = clut[data[offset]].to_sdl_bytes()
+                offset += 1
 
-        pixel_array.close()
+        # SDL_UnlockSurface(surface)
 
         return surface
 
@@ -56,6 +131,22 @@ class Utils:
             offset += 2
 
         return tile_indices, offset
+
+    @staticmethod
+    def read_tile_flag_list(data, offset):
+        count = Utils.read_short_2(data, offset)
+        offset += 2
+
+        tile_flags = []
+        for i in range(count):
+            current_flags = []
+            current_flags.append(Utils.read_long(data, offset))
+            current_flags.append(Utils.read_long(data, offset + 4))
+            print(str(i) + ": " + hex(current_flags[0]) + ", " + hex(current_flags[1]))
+            tile_flags.append(current_flags)
+            offset += 8
+
+        return tile_flags, offset
 
 
     @staticmethod
@@ -113,53 +204,41 @@ class Utils:
 
         return output
 
+
 class PPImage:
     def __init__(self, filename):
-        # 4 bytes, always 0x0004b604
-        # 4 bytes, 0x00000002 for uncompressed, 0x00000000 for compressed
-        # 1536 bytes CLUT
-        # 2 byte width
-        # 2 byte height
-        # image data
 
         with open(filename, "rb") as file_handle:
             raw_data = Utils.unpack_generic(file_handle.read())
 
-        self.clut = Utils.read_clut(raw_data[0x8 : 0x608])
-        self.width = Utils.read_short(raw_data[0x608 : 0x60a])
-        self.height = Utils.read_short(raw_data[0x60a : 0x60c])
-        # print(self.width)
+        self.clut = Utils.read_clut_2(raw_data, 0x08)
+        self.width = Utils.read_short_2(raw_data, 0x608)
+        self.height = Utils.read_short_2(raw_data, 0x60a)
 
-        self.image = Utils.read_image(raw_data[0x60c :], self.clut, (self.width, self.height))
+        self.surface = Utils.read_image(raw_data, 0x60c, self.width, self.height, self.clut)
+
 
 class PPTileSet:
     def __init__(self, filename, clut):
-        # after tile images:
-        # 2 bytes, length of next section
-        # N records, 2 bytes each, that look like indices of tiles
-        # 2 bytes, length of next section
-        # N records, 8 bytes each, flags?
-        # 0x0100
-        # Something that looks like a CLUT
-        # Then at the end, animation data?
 
         with open(filename, "rb") as file_handle:
             self.raw_data = Utils.unpack_generic(file_handle.read())
 
-        filename_count = Utils.read_short(self.raw_data[0x26 : 0x28])
+        filename_count = Utils.read_short_2(self.raw_data, 0x26)
 
         tile_count_offset = 0x28 + (filename_count * 0x100)
 
-        tile_count = Utils.read_short(self.raw_data[tile_count_offset : tile_count_offset + 2])
+        tile_count = Utils.read_short_2(self.raw_data, tile_count_offset)
         self.tiles = []
 
         offset = tile_count_offset + 2
         for i in range(tile_count):
-            self.tiles.append(Utils.read_image(self.raw_data[offset + (i * (32 * 32)) : offset + (i * (32 * 32)) + (32 * 32)], clut, (32, 32)))
+            self.tiles.append(Utils.read_image(self.raw_data, offset + (i * (32 * 32)), 32, 32, clut))
 
         offset += tile_count * 32 * 32
 
         self.tile_index_list, offset = Utils.read_tile_index_list(self.raw_data, offset)
+        self.tile_flag_list, offset = Utils.read_tile_flag_list(self.raw_data, offset)
 
         # width = 640
         # height = 1024
@@ -198,25 +277,25 @@ class PPTileSet:
             print(tile_index)
             return self.tiles[0]
 
-    @staticmethod
-    def read_tile(data):
-        if len(data) != 32 * 32:
-            raise Exception("Invalid tile length")
-
-        i = 0
-        surface = pygame.Surface((32, 32))
-        pixel_array = pygame.PixelArray(surface)
-
-        for y in range(32):
-            for x in range(32):
-                current_byte = data[i]
-                color = (current_byte, current_byte, current_byte)
-                pixel_array[x, y] = color
-                i += 1
-
-        pixel_array.close()
-
-        return surface
+    # @staticmethod
+    # def read_tile(data):
+    #     if len(data) != 32 * 32:
+    #         raise Exception("Invalid tile length")
+    #
+    #     i = 0
+    #     surface = pygame.Surface((32, 32))
+    #     pixel_array = pygame.PixelArray(surface)
+    #
+    #     for y in range(32):
+    #         for x in range(32):
+    #             current_byte = data[i]
+    #             color = (current_byte, current_byte, current_byte)
+    #             pixel_array[x, y] = color
+    #             i += 1
+    #
+    #     pixel_array.close()
+    #
+    #     return surface
 
 
 class PPMap:
@@ -224,8 +303,10 @@ class PPMap:
         with open(filename, "rb") as file_handle:
             self.raw_data = file_handle.read()
 
-        self.width = (self.raw_data[0x17] << 8) + self.raw_data[0x18]
-        self.height = (self.raw_data[0x19] << 8) + self.raw_data[0x1a]
+        # self.width = (self.raw_data[0x17] << 8) + self.raw_data[0x18]
+        self.width = Utils.read_short_2(self.raw_data, 0x17)
+        # self.height = (self.raw_data[0x19] << 8) + self.raw_data[0x1a]
+        self.height = Utils.read_short_2(self.raw_data, 0x19)
 
         self.tileset = tileset
 
@@ -235,68 +316,121 @@ class PPMap:
 
 
         display_size = (1600, 960)
-        pygame.init()
+        # pygame.init()
+        #
+        # self.screen = pygame.display.set_mode(display_size)
+        # pygame.display.set_caption("Map Viewer")
+        window = SDL_CreateWindow(b"Map Viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, display_size[0], display_size[1],
+                                  SDL_WINDOW_SHOWN)
+        screen_surface = SDL_GetWindowSurface(window)
 
-        self.screen = pygame.display.set_mode(display_size)
-        pygame.display.set_caption("Map Viewer")
-        self.running = True
+        running = True
 
         width = self.width
         height = self.height
-
 
         position_x = 0
         position_y = 0
 
         padding = 0
 
-        surface = pygame.Surface((32 * (width + 2), 32 * (height + 2)))
+        # surface = pygame.Surface((32 * (width + 2), 32 * (height + 2)))
+        map_surface = Utils.create_surface(32 * (width + 2), 32 * (height + 2))
 
+        copy_from_rect = SDL_Rect(0, 0, display_size[0], display_size[1])
 
-        while self.running:
+        # surface.fill((0, 0, 0))
 
+        for j in range(height):
+            for i in range(width):
+                tile_index = j * width + i - padding
 
-            surface.fill((0, 0, 0))
+                if tile_index < 0:
+                    tile_id = 0
+                else:
+                    tile_id = self.map[tile_index]
 
-            for j in range(height):
-                for i in range(width):
-                    tile_index = j * width + i - padding
+                # Drawing coords
+                x = (i + 1) * 32
+                y = (j + 1) * 32
+                effective_tile_id = tile_id & 0x3fff
+                # surface.blit(self.tileset.get_tile(effective_tile_id), (x, y))
+                SDL_BlitSurface(
+                    self.tileset.get_tile(effective_tile_id),
+                    None,
+                    map_surface,
+                    SDL_Rect(x, y, 32, 32),
+                )
 
-                    if tile_index < 0:
-                        tile_id = 0
-                    else:
-                        tile_id = self.map[tile_index]
+                tile_flags_0 = self.tileset.tile_flag_list[effective_tile_id][0]
+                # if tile_flags_0 & 0x2000000:
+                #     sdl2.SDL_FillRect(map_surface, SDL_Rect(x, y, 3, 3), 0xff0000ff)
+                # if tile_flags_0 & 0x4000000:
+                #     sdl2.SDL_FillRect(map_surface, SDL_Rect(x + 3, y, 3, 3), 0xff00ffff)
+                # if tile_flags_0 & 0x8000000:
+                #     # yellow
+                #     sdl2.SDL_FillRect(map_surface, SDL_Rect(x + 6, y, 3, 3), 0xffff00ff)
 
-                    # Drawing coords
-                    x = (i + 1) * 32
-                    y = (j + 1) * 32
-                    effective_tile_id = tile_id & 0x3fff
-                    surface.blit(self.tileset.get_tile(effective_tile_id), (x, y))
+                # "Block is solid?"
+                if tile_flags_0 & 0xf0000:
+                    # blue
+                    color = 0xffff00ff
+                    sdl2.SDL_FillRect(map_surface, SDL_Rect(x , y, 2, 32), color)
+                    sdl2.SDL_FillRect(map_surface, SDL_Rect(x, y, 32, 2), color)
 
-                    # if tile_id & 0x8000:
-                    #     pygame.draw.rect(surface, (255, 0, 0), (x, y, x + 32, y + 32), width = 2)
-                    #
-                    # if tile_id & 0x4000:
-                    #     pygame.draw.rect(surface, (0, 255, 0), (x, y, x + 32, y + 32), width = 1)
+        while running:
+            copy_from_rect.x = position_x
+            copy_from_rect.y = position_y
 
-            self.screen.blit(surface, (position_x, position_y))
-            pygame.display.flip()
+            if SDL_BlitSurface(map_surface, copy_from_rect, screen_surface, None) != 0:
+                print(SDL_GetError())
 
-            for event in pygame.event.get():
-                if event.type == QUIT:
-                    self.running = False
+            if SDL_UpdateWindowSurface(window) != 0:
+                print(SDL_GetError())
 
-            key_input = pygame.key.get_pressed()
-            if key_input[K_UP]:
-                position_y += 32
-            if key_input[K_DOWN]:
+            # event = SDL_Event()
+            # while SDL_PollEvent(ctypes.byref(event)) != 0:
+            #     if event.type == SDL_QUIT:
+            #         running = False
+            #         break
+
+            for event in sdl2.ext.get_events():
+                if event.type == sdl2.SDL_QUIT:
+                    running = False
+                    break
+
+            key_states = sdl2.SDL_GetKeyboardState(None)
+            if key_states[sdl2.SDL_SCANCODE_UP]:
                 position_y -= 32
-            if key_input[K_LEFT]:
-                position_x += 32
-            if key_input[K_RIGHT]:
+            if key_states[sdl2.SDL_SCANCODE_DOWN]:
+                position_y += 32
+            if key_states[sdl2.SDL_SCANCODE_LEFT]:
                 position_x -= 32
+            if key_states[sdl2.SDL_SCANCODE_RIGHT]:
+                position_x += 32
+            # SDL_Delay(10)
 
-        pygame.quit()
+        SDL_DestroyWindow(window)
+        SDL_Quit()
+
+
+            # pygame.display.flip()
+
+        #     for event in pygame.event.get():
+        #         if event.type == QUIT:
+        #             self.running = False
+        #
+        #     key_input = pygame.key.get_pressed()
+        #     if key_input[K_UP]:
+        #         position_y += 32
+        #     if key_input[K_DOWN]:
+        #         position_y -= 32
+        #     if key_input[K_LEFT]:
+        #         position_x += 32
+        #     if key_input[K_RIGHT]:
+        #         position_x -= 32
+        #
+        # pygame.quit()
 
     @staticmethod
     def unpack(data):
@@ -326,15 +460,44 @@ class PPMap:
 
 
 
+def image_viewer_test():
+    SDL_Init(SDL_INIT_VIDEO)
+
+    image = PPImage("../Power Pete/Data/Images/Titlepage.image")
+
+    window = SDL_CreateWindow(b"poop", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, image.width, image.height,
+                              SDL_WINDOW_SHOWN)
+    surface = SDL_GetWindowSurface(window)
+
+    if SDL_BlitSurface(image.surface, None, surface, None) != 0:
+        print(SDL_GetError())
+
+    if SDL_UpdateWindowSurface(window) != 0:
+        print(SDL_GetError())
+
+    running = True
+    event = SDL_Event()
+    while running:
+        while SDL_PollEvent(ctypes.byref(event)) != 0:
+            if event.type == SDL_QUIT:
+                running = False
+                break
+        SDL_Delay(10)
+
+    SDL_DestroyWindow(window)
+    SDL_Quit()
+
 
 if __name__ == "__main__":
     # map = PPMap("Jurassic.map-1")
     # map = PPMap("Power Pete/Data/Maps/Jurassic.map-1")
     # map.run()
     #
-    image = PPImage("Power Pete/Data/Images/Titlepage.image")
-    tileset = PPTileSet("Power Pete/Data/Maps/Candy.tileset", image.clut)
-    map = PPMap("Power Pete/Data/Maps/Candy.Map-2", tileset)
+
+
+    image = PPImage("../Power Pete/Data/Images/Titlepage.image")
+    tileset = PPTileSet("../Power Pete/Data/Maps/Jurassic.Tileset", image.clut)
+    map = PPMap("../Power Pete/Data/Maps/Jurassic.map-3", tileset)
     map.run()
 
     # with open("Power Pete/Data/Maps/Clown.tileset", "rb") as fh:
@@ -343,19 +506,5 @@ if __name__ == "__main__":
 
 
 
-    # image = PPImage("Power Pete/Data/Images/Titlepage.image")
-    #
-    # screen = pygame.display.set_mode((image.width, image.height))
-    # pygame.display.set_caption("Image Viewer")
-    # running = True
-    #
-    # screen.blit(image.image, (0, 0))
-    #
-    # pygame.display.update()
-    #
-    # while running:
-    #     for event in pygame.event.get():
-    #         if event.type == QUIT:
-    #             running = False
-    #
-    # pygame.quit()
+
+
